@@ -517,14 +517,18 @@ class GPT(BaseModel):
                 raise TypeError("You need to call `gpt.set_kv_cache()`")
             mask = self.mask_cache.index_select(2, input_pos)
         else:
+            #print("before applying cos and sin")
             cos = self.cos[:T]
             sin = self.sin[:T]
             mask = None
 
+        #print("before applying transformer wte")
         x = self.transformer.wte(idx)  # token embeddings of shape (b, t, n_embd)
         for block in self.transformer.h:
             x = block(x, cos, sin, mask, input_pos)
+        #print("before applying transformer ln_f")
         x = self.transformer.ln_f(x)
+        #print("before applying lm_head")
         if lm_head_chunk_size > 0:
             # chunk the lm head logits to reduce the peak memory used by autograd
             return [self.lm_head(x_i) for x_i in x.split(lm_head_chunk_size, dim=1)]

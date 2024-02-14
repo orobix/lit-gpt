@@ -1,0 +1,45 @@
+# @package _global_
+
+defaults:
+  - _self_
+logging_and_checkpoint:
+  eval_interval : 27 # epoch_size/(batch_size*devices)
+  save_interval : 27 # epoch_size/(batch_size*devices)
+  log_interval : 16 # batch_size
+  mlflow_tracking_uri : "http://192.168.3.78:5100"
+  experiment_name: "clinkart_Llama70B"
+  run_name: "lora_8_devices"
+  checkpoint_dir : 
+    _target_ : pathlib.Path 
+    _args_ : ["/home/federica.moretti/local/models_genAI/checkpoints/meta-llama/Llama-2-70b-hf"]
+experiment:
+  devices : 1
+  num_epochs : 30
+  learning_rate : 3e-5
+  weight_decay : 0.1
+  precision : "bf16-true"
+  quantize: "bnb.nf4-dq"
+  out_dir: 
+    _target_ : pathlib.Path 
+    _args_ : ["/home/federica.moretti/ecream/full_finetuning/clinkart/LORA_Llama70B"]
+data:
+  batch_size : 16 # divide the batch_size you want by devices
+  micro_batch_size : 2
+  gradient_accumulation_iters : batch_size // micro_batch_size
+  max_seq_length : 256
+  epoch_size : 839
+  max_iters : num_epochs * (epoch_size // micro_batch_size) // devices
+  random_microbatch : False
+  data_dir:
+    _target_ : pathlib.Path 
+    _args_ : ["/home/federica.moretti/ecream/full_finetuning/clinkart/data/pt_data/data_from_docs_split_OL"]
+lora:
+  r : 128
+  alpha : 256
+  dropout : 0.05
+  query : True
+  key : True
+  value : True
+  projection : True
+  mlp : True
+  head : True

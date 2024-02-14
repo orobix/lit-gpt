@@ -21,6 +21,35 @@ from typing_extensions import Self
 
 if TYPE_CHECKING:
     from lit_gpt import GPT
+    
+    
+class dotdict(dict):
+    """
+    A dictionary supporting dot notation.
+    """
+
+    __getattr__ = dict.get
+    __setattr__ = dict.__setitem__
+    __delattr__ = dict.__delitem__
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for k, v in self.items():
+            if isinstance(v, dict):
+                self[k] = dotdict(v)
+
+    def __getstate__(self):
+        return self
+
+    def __setstate__(self, state):
+        self.update(state)
+
+    def as_dict(self) -> Dict[str, Any]:
+        _copy = dict(self)
+        for k, v in _copy.items():
+            if isinstance(v, dotdict):
+                _copy[k] = v.as_dict()
+        return _copy
 
 
 def find_multiple(n: int, k: int) -> int:

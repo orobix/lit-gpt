@@ -6,12 +6,16 @@ import time
 from pathlib import Path
 from typing import Dict, List, Literal, Optional, Tuple
 
+import mlflow
+import random
 import lightning as L
 import torch
 from lightning.fabric.loggers import CSVLogger
 from lightning.fabric.plugins import BitsandbytesPrecision
 from lightning.fabric.strategies import FSDPStrategy
 from lightning.fabric.utilities import ThroughputMonitor
+from lightning.pytorch.loggers import MLFlowLogger
+from torch.utils.data import DataLoader
 
 # support running without installing as a package
 wd = Path(__file__).parent.parent.resolve()
@@ -29,10 +33,11 @@ from lit_gpt.utils import (
 )
 from scripts.prepare_alpaca import generate_prompt
 
+
 eval_interval = 27 #(if epoch_size=839)
 save_interval = 27 #(if epoch_size=839)
 #eval_iters = 100
-eval_max_new_tokens = 100
+#eval_max_new_tokens = 100
 log_interval = 16 #(batch size 32/ micro batch size 2)
 devices = 1
 
@@ -42,7 +47,6 @@ learning_rate = 3e-5
 #batch_size = 128
 batch_size = 32 / devices
 micro_batch_size = 2
-#micro_batch_size = 3
 gradient_accumulation_iters = batch_size // micro_batch_size
 assert gradient_accumulation_iters > 0
 #max_seq_length = None  # assign value to truncate
@@ -55,12 +59,8 @@ num_epochs = 30
 max_iters = num_epochs * (epoch_size // micro_batch_size) // devices
 #weight_decay = 0.01
 weight_decay = 0.0
-#lora_r = 8
-#lora_r = 32
-lora_r = 64
-#lora_alpha = 16
-#lora_alpha = 64
-lora_alpha = 128
+lora_r = 8
+lora_alpha = 16
 lora_dropout = 0.05
 lora_query = True
 lora_key = True
@@ -81,7 +81,13 @@ def setup(
     precision: Optional[str] = None,
     quantize: Optional[Literal["bnb.nf4", "bnb.nf4-dq", "bnb.fp4", "bnb.fp4-dq", "bnb.int8-training"]] = None,
 ) -> None:
+
+    hparams['precision'] = precision
     precision = precision or get_default_supported_precision(training=True)
+    hparams['data_dir'] = data_dir
+    hparams['checkpoint_dir'] = checkpoint_dir
+    hparams['out_dir'] = out_dir
+    hparams['quantize'] = quantize
 
     plugins = None
     if quantize is not None and quantize.startswith("bnb."):
@@ -107,8 +113,13 @@ def setup(
     else:
         strategy = "auto"
 
+
+    MLFLOW_TRACKING_URI='http://192.168.3.78:5100'
+    MLFLOW_S3_ENDPOINT_URL='http://192.168.3.78:9100'
     logger = CSVLogger(out_dir.parent, out_dir.name, flush_logs_every_n_steps=log_interval)
-    fabric = L.Fabric(devices=devices, strategy=strategy, precision=precision, loggers=logger, plugins=plugins)
+    mlf_logger = MLFlowLogger(experiment_name="clinkart_Llama70B", tracking_uri=MLFLOW_TRACKING_URI)
+    mlf_logger.log_hyperparams(hparams)
+    fabric = L.Fabric(devices=devices, strategy=strategy, precision=precision, loggers=[logger, mlf_logger], plugins=plugins)
     fabric.print(hparams)
     fabric.launch(main, data_dir, checkpoint_dir, out_dir)
 
@@ -124,6 +135,9 @@ def main(fabric: L.Fabric, data_dir: Path, checkpoint_dir: Path, out_dir: Path) 
     train_data = torch.load(data_dir / "train.pt")
     val_data = torch.load(data_dir / "test.pt")
 
+    with mlflow.start_run(run_id=fabric.loggers[-1].run_id):
+        mlflow.log_artifacts(data_dir)
+
     if not any((lora_query, lora_key, lora_value, lora_projection, lora_mlp, lora_head)):
         fabric.print("Warning: all LoRA layers are disabled!")
     config = Config.from_name(
@@ -138,6 +152,7 @@ def main(fabric: L.Fabric, data_dir: Path, checkpoint_dir: Path, out_dir: Path) 
         to_mlp=lora_mlp,
         to_head=lora_head,
     )
+
     checkpoint_path = checkpoint_dir / "lit_model.pth"
     fabric.print(f"Loading model {str(checkpoint_path)!r} with {config.__dict__}")
     with fabric.init_module(empty_init=(devices > 1)):
@@ -193,85 +208,101 @@ def train(
         f" {model.max_seq_length} and context length is {model.config.block_size}"
     )
 
-    validate(fabric, model, val_data, tokenizer, max_iters=2)  # sanity check
+    #validate(fabric, model, val_data, tokenizer, max_iters=2)  # sanity check
+    validate(fabric, model, val_data, tokenizer)  # sanity check
 
     throughput = ThroughputMonitor(fabric, window_size=50)
     step_count = 0
     total_lengths = 0
     total_t0 = time.perf_counter()
 
-    for iter_num in range(1, max_iters + 1):
-        if step_count <= warmup_steps:
-            # linear warmup
-            lr = learning_rate * step_count / warmup_steps
-            for param_group in optimizer.param_groups:
-                param_group["lr"] = lr
+    losses = []
+    iter_num = 0
+    for epoch in range(0, num_epochs):
 
-        iter_t0 = time.perf_counter()
+        random.shuffle(train_data)
+        for i in range(0, len(train_data), micro_batch_size):
+            iter_num += 1
+            if step_count <= warmup_steps:
+                # linear warmup
+                lr = learning_rate * step_count / warmup_steps
+                for param_group in optimizer.param_groups:
+                    param_group["lr"] = lr
 
-        input_ids, targets = get_batch(fabric, train_data, longest_seq_ix if iter_num == 1 else None)
+            iter_t0 = time.perf_counter()
+            
+            idx = list(range(i,i+micro_batch_size))
+            idx = [i % len(train_data) for i in idx]
+            input_ids, targets = get_batch(fabric, train_data, idx, longest_seq_ix if iter_num == 1 else None)
 
-        is_accumulating = iter_num % gradient_accumulation_iters != 0
-        with fabric.no_backward_sync(model, enabled=is_accumulating):
-            logits = model(input_ids, lm_head_chunk_size=128)
-            # shift the targets such that output n predicts token n+1
-            logits[-1] = logits[-1][..., :-1, :]
-            loss = chunked_cross_entropy(logits, targets[..., 1:])
-            fabric.backward(loss / gradient_accumulation_iters)
+            is_accumulating = iter_num % gradient_accumulation_iters != 0
+            with fabric.no_backward_sync(model, enabled=is_accumulating):
+                logits = model(input_ids, lm_head_chunk_size=128)
+                # shift the targets such that output n predicts token n+1
+                logits[-1] = logits[-1][..., :-1, :]
+                loss = chunked_cross_entropy(logits, targets[..., 1:])
+                fabric.backward(loss / gradient_accumulation_iters)
+                losses.append(loss.item())
 
-        if not is_accumulating:
-            optimizer.step()
-            optimizer.zero_grad()
-            if step_count > warmup_steps:
-                scheduler.step()
-            step_count += 1
+            if not is_accumulating:
+                optimizer.step()
+                optimizer.zero_grad()
+                if step_count > warmup_steps:
+                    scheduler.step()
+                step_count += 1
 
-        total_lengths += input_ids.numel()
-        if iter_num % log_interval == 0:
-            loss_item = loss.item()  # expensive device-to-host synchronization
-            t1 = time.perf_counter()
-            throughput.update(
-                time=t1 - total_t0, batches=iter_num, samples=iter_num * micro_batch_size, lengths=total_lengths
-            )
-            throughput.compute_and_log(step=iter_num)
-            fabric.print(
-                f"iter {iter_num} step {step_count}: loss {loss_item:.4f}, iter time:"
-                f" {(t1 - iter_t0) * 1000:.2f}ms{' (optimizer.step)' if not is_accumulating else ''}"
-            )
+            total_lengths += input_ids.numel()
+            if iter_num % log_interval == 0:
+                loss_item = loss.item()  # expensive device-to-host synchronization
+                t1 = time.perf_counter()
+                throughput.update(
+                    time=t1 - total_t0, batches=iter_num, samples=iter_num * micro_batch_size, lengths=total_lengths
+                )
+                throughput.compute_and_log(step=iter_num)
+                fabric.print(
+                    f"iter {iter_num} step {step_count}: loss {loss_item:.4f}, iter time:"
+                    f" {(t1 - iter_t0) * 1000:.2f}ms{' (optimizer.step)' if not is_accumulating else ''}"
+                )
+                #fabric.log('train_loss', loss_item, iter_num)
+                fabric.log('train_loss', sum(losses)/len(losses), iter_num)
+                losses = []
 
-        if not is_accumulating and step_count % eval_interval == 0:
-            t0 = time.perf_counter()
-            val_loss = validate(fabric, model, val_data, tokenizer, max_iters=eval_iters)
-            t1 = time.perf_counter() - t0
-            fabric.print(f"step {iter_num}: val loss {val_loss.item():.4f}, val time: {t1 * 1000:.2f}ms")
-            fabric.barrier()
-        if not is_accumulating and step_count % save_interval == 0:
-            checkpoint_path = out_dir / f"iter-{iter_num:06d}-ckpt.pth"
-            save_lora_checkpoint(fabric, model, checkpoint_path)
+            if not is_accumulating and step_count % eval_interval == 0:
+                t0 = time.perf_counter()
+                val_loss = validate(fabric, model, val_data, tokenizer)
+                fabric.log('val_loss', val_loss, iter_num)
+                t1 = time.perf_counter() - t0
+                fabric.print(f"step {iter_num}: val loss {val_loss.item():.4f}, val time: {t1 * 1000:.2f}ms")
+                fabric.barrier()
+            if not is_accumulating and step_count % save_interval == 0:
+                checkpoint_path = out_dir / f"iter-{iter_num:06d}-ckpt.pth"
+                save_lora_checkpoint(fabric, model, checkpoint_path)
 
 
 # FSDP has issues with `inference_mode`
 @torch.no_grad()
-def validate(fabric: L.Fabric, model: GPT, val_data: List[Dict], tokenizer: Tokenizer, max_iters: int) -> torch.Tensor:
+def validate(fabric: L.Fabric, model: GPT, val_data: List[Dict], tokenizer: Tokenizer) -> torch.Tensor:
     fabric.print("Validating ...")
     model.eval()
-    losses = torch.zeros(max_iters)
-    for k in range(max_iters):
-        input_ids, targets = get_batch(fabric, val_data)
+    losses = []
+    for i in range(0, len(val_data), micro_batch_size):
+        idx = list(range(i, (i+micro_batch_size)))
+        idx = [i % len(val_data) for i in idx]
+        input_ids, targets = get_batch(fabric, val_data, idx)
         logits = model(input_ids)
-        losses[k] = chunked_cross_entropy(logits[..., :-1, :], targets[..., 1:], chunk_size=0)
-    val_loss = losses.mean()
-
-    model.clear_kv_cache()
+        losses.append(chunked_cross_entropy(logits[..., :-1, :], targets[..., 1:], chunk_size=0))
+    val_loss = sum(losses)/len(losses)
 
     model.train()
     return val_loss
 
 
 def get_batch(
-    fabric: L.Fabric, data: List[Dict], longest_seq_ix: Optional[int] = None
+    fabric: L.Fabric, data: List[Dict], ix: Optional[List[int]] = None, longest_seq_ix: Optional[int] = None
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    ix = torch.randint(len(data), (micro_batch_size,))
+    if not ix:
+        x = torch.randint(len(data), (micro_batch_size,))
+
     if longest_seq_ix is not None:
         # force the longest sample at the beginning so potential OOMs happen right away
         ix[0] = longest_seq_ix

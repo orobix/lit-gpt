@@ -82,11 +82,11 @@ def main(
     prompt_length = encoded.size(0)
     max_returned_tokens = prompt_length + max_new_tokens
 
-    fabric.print(f"Loading model {str(checkpoint_path)!r} with {config.__dict__}", file=sys.stderr)
+    #fabric.print(f"Loading model {str(checkpoint_path)!r} with {config.__dict__}", file=sys.stderr)
     t0 = time.perf_counter()
     with fabric.init_module(empty_init=True), gptq_quantization(quantize == "gptq.int4"):
         model = GPT(config)
-    fabric.print(f"Time to instantiate model: {time.perf_counter() - t0:.02f} seconds.", file=sys.stderr)
+    #fabric.print(f"Time to instantiate model: {time.perf_counter() - t0:.02f} seconds.", file=sys.stderr)
     with fabric.init_tensor():
         # set the max_seq_length to limit the memory usage to what we need
         model.max_seq_length = max_returned_tokens
@@ -98,7 +98,7 @@ def main(
 
     t0 = time.perf_counter()
     load_checkpoint(fabric, model, checkpoint_path)
-    fabric.print(f"Time to load the model weights: {time.perf_counter() - t0:.02f} seconds.", file=sys.stderr)
+    #fabric.print(f"Time to load the model weights: {time.perf_counter() - t0:.02f} seconds.", file=sys.stderr)
 
     L.seed_everything(1234)
     t0 = time.perf_counter()
@@ -107,12 +107,15 @@ def main(
 
     output = tokenizer.decode(y)
     output = output.split("### Response:")[1].strip()
+
     fabric.print(output)
 
     tokens_generated = y.size(0) - prompt_length
-    fabric.print(f"\n\nTime for inference: {t:.02f} sec total, {tokens_generated / t:.02f} tokens/sec", file=sys.stderr)
-    if fabric.device.type == "cuda":
-        fabric.print(f"Memory used: {torch.cuda.max_memory_allocated() / 1e9:.02f} GB", file=sys.stderr)
+    #fabric.print(f"\n\nTime for inference: {t:.02f} sec total, {tokens_generated / t:.02f} tokens/sec", file=sys.stderr)
+    #if fabric.device.type == "cuda":
+    #    fabric.print(f"Memory used: {torch.cuda.max_memory_allocated() / 1e9:.02f} GB", file=sys.stderr)
+    
+    return output
 
 
 if __name__ == "__main__":

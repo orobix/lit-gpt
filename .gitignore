@@ -15,3 +15,8 @@ wandb
 events.out.tfevents*
 
 tests/reference_models
+
+# log
+mlruns
+mlartifacts
+ml-runs
