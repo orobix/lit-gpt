@@ -2,6 +2,7 @@
 
 defaults:
   - _self_
+  - hydra: default.yaml
 
 
 logging_and_checkpoint:
@@ -10,7 +11,7 @@ logging_and_checkpoint:
   log_interval: ${data.batch_size} # batch_size
   mlflow_tracking_uri: "http://192.168.3.78:5100"
   experiment_name: "clinkart_Llama70B"
-  run_name: "lora_8_devices"
+  run_name: "qlora128_dropout0.5"
   checkpoint_dir: ???
 
 experiment:
@@ -19,7 +20,7 @@ experiment:
   learning_rate: 3e-5
   weight_decay: 0.1
   precision: "bf16-true"
-  quantize: null
+  quantize: null # bnb.nf4
   out_dir: ???
 
   # computed on the fly

@@ -20,3 +20,5 @@ tests/reference_models
 mlruns
 mlartifacts
 ml-runs
+.env
+logs
