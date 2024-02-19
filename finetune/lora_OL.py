@@ -36,6 +36,7 @@ from lit_gpt.utils import (
     get_default_supported_precision,
     load_checkpoint,
     num_parameters,
+    create_balanced_batch,
 )
 
 
@@ -262,10 +263,14 @@ def train(
     losses = []
     iter_num = 0
 
+    if cfg.data.balanced_batch_class:
+        train_data = create_balanced_batch(train_data, cfg.data.balanced_batch_class, cfg.data.batch_size*cfg.data.micro_batch_size)
+    else:
+        random.shuffle(train_data)
+
     # Epochs management added to simplify experiments setting
     for _ in range(0, cfg.experiment.num_epochs):
         # Random shuffle added to increase the variability in training
-        random.shuffle(train_data)
         for i in range(0, len(train_data), cfg.data.micro_batch_size):
             # print(f'{fabric.global_rank}:{i} in training loop')
             iter_num += 1

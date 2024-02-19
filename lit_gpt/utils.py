@@ -1,7 +1,7 @@
 # Copyright Lightning AI. Licensed under the Apache License 2.0, see LICENSE file.
 
 """Utility functions for training and inference."""
-
+import random
 import math
 import pickle
 import sys
@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ContextManager, Dict, Iterable, List, Mapping, Optional, TypeVar, Union
 
 import lightning as L
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.utils._device
@@ -50,6 +51,31 @@ class dotdict(dict):
             if isinstance(v, dotdict):
                 _copy[k] = v.as_dict()
         return _copy
+    
+def create_balanced_batch(data, class_to_balance, batch_size):
+    
+    idx_class_specified = np.array([i for i in range(len(data)) if data[i]['output'] in class_to_balance])
+    idx_other_classes = np.array([i for i in range(len(data)) if data[i]['output'] not in class_to_balance])
+    
+    np.random.shuffle(idx_class_specified)
+    np.random.shuffle(idx_other_classes)
+    
+    len_major_class = max(len(idx_class_specified), len(idx_other_classes))
+    
+    el_per_class = int(batch_size//2)
+    
+    data_idx = list()
+    batch_idx = np.arange(0, el_per_class)
+    for i in range(0, len_major_class, el_per_class):
+        
+        batch = np.concatenate((idx_class_specified[(batch_idx + i) % len(idx_class_specified)], idx_other_classes[(batch_idx + i) % len(idx_other_classes)]), axis=None)
+        np.random.shuffle(batch)
+        data_idx.extend(batch.tolist())
+    
+    balanced_data = np.array(data)[data_idx].tolist()
+    
+    return balanced_data
+    
 
 
 def find_multiple(n: int, k: int) -> int:
