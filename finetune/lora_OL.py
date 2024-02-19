@@ -10,12 +10,13 @@ import random
 import sys
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import hydra
 import lightning as L
 import mlflow
 import torch
+from genericpath import isdir
 from lightning.fabric.loggers import CSVLogger
 from lightning.fabric.plugins import BitsandbytesPrecision
 from lightning.fabric.strategies import FSDPStrategy
@@ -28,16 +29,19 @@ wd = Path(__file__).parent.parent.resolve()
 sys.path.append(str(wd))
 
 
+from generate.base import generate
 from lit_gpt.lora import GPT, Block, Config, lora_filter, mark_only_lora_as_trainable
+from lit_gpt.tokenizer import Tokenizer
 from lit_gpt.utils import (
     check_valid_checkpoint_dir,
     chunked_cross_entropy,
+    create_balanced_batch,
     dotdict,
     get_default_supported_precision,
     load_checkpoint,
     num_parameters,
-    create_balanced_batch,
 )
+from scripts.prepare_alpaca import generate_prompt
 
 
 @hydra.main(version_base="1.3", config_path="../configs", config_name="config")
@@ -119,13 +123,12 @@ def setup(cfg: DictConfig) -> None:
         loggers=[logger, mlf_logger],
         plugins=plugins,
     )
-    # fabric = L.Fabric(devices=devices, strategy=strategy, precision=precision, loggers=logger, plugins=plugins)
     fabric.print(cfg)
 
     fabric.launch(main, cfg)
 
 
-def main(fabric: L.Fabric, cfg: dotdict) -> None:
+def main(fabric: L.Fabric, cfg: dotdict[str, Any]) -> None:
     lora_cfg = cfg.lora
     data_dir = cfg.data.data_dir
     out_dir = cfg.experiment.out_dir
@@ -136,6 +139,8 @@ def main(fabric: L.Fabric, cfg: dotdict) -> None:
 
     if fabric.global_rank == 0:
         os.makedirs(out_dir, exist_ok=True)
+        with open(out_dir / "config.yaml", "w") as f:
+            OmegaConf.save(cfg.as_dict(), f)
 
     train_data = torch.load(data_dir / "train.pt")
     val_data = torch.load(data_dir / "test.pt")
@@ -183,8 +188,6 @@ def main(fabric: L.Fabric, cfg: dotdict) -> None:
         f"Number of non trainable parameters: {num_parameters(model, requires_grad=False):,}"
     )
 
-    # print(f"{fabric.global_rank}: before model setup")
-
     model = fabric.setup_module(model)
 
     trainable_params = [p for p in model.parameters() if p.requires_grad]
@@ -208,9 +211,7 @@ def main(fabric: L.Fabric, cfg: dotdict) -> None:
     )
 
     # strict=False because missing keys due to LoRA weights not contained in state dict
-    # print(f"{fabric.global_rank}: before checkpoint loading")
     load_checkpoint(fabric, model, checkpoint_path, strict=False)
-    # print(f"{fabric.global_rank}: checkpoint loaded")
 
     fabric.seed_everything(1337 + fabric.global_rank)
 
@@ -240,8 +241,9 @@ def train(
     scheduler: torch.optim.lr_scheduler,
     train_data: List[Dict],
     val_data: List[Dict],
-    cfg: dotdict,
+    cfg: dotdict[str, Any],
 ) -> None:
+    tokenizer = Tokenizer(cfg.logging_and_checkpoint.checkpoint_dir)
     longest_seq_length, longest_seq_ix = get_longest_seq_length(train_data)
     model.max_seq_length = min(
         longest_seq_length, cfg.data.max_seq_length or float("inf")
@@ -251,9 +253,7 @@ def train(
         f" {model.max_seq_length} and context length is {model.config.block_size}"
     )
 
-    validate(fabric, model, val_data, cfg)  # sanity check
-
-    # print(f'{fabric.global_rank} validation ended')
+    validate(fabric, model, val_data, cfg, tokenizer)  # sanity check
 
     throughput = ThroughputMonitor(fabric, window_size=50)
     step_count = 0
@@ -264,7 +264,11 @@ def train(
     iter_num = 0
 
     if cfg.data.balanced_batch_class:
-        train_data = create_balanced_batch(train_data, cfg.data.balanced_batch_class, cfg.data.batch_size*cfg.data.micro_batch_size)
+        train_data = create_balanced_batch(
+            train_data,
+            cfg.data.balanced_batch_class,
+            cfg.data.batch_size * cfg.data.micro_batch_size,
+        )
     else:
         random.shuffle(train_data)
 
@@ -272,7 +276,6 @@ def train(
     for _ in range(0, cfg.experiment.num_epochs):
         # Random shuffle added to increase the variability in training
         for i in range(0, len(train_data), cfg.data.micro_batch_size):
-            # print(f'{fabric.global_rank}:{i} in training loop')
             iter_num += 1
             if step_count <= cfg.experiment.warmup_steps:
                 # linear warmup
@@ -298,20 +301,15 @@ def train(
             is_accumulating = iter_num % cfg.data.gradient_accumulation_iters != 0
             with fabric.no_backward_sync(model, enabled=is_accumulating):
                 logits = model(input_ids, lm_head_chunk_size=128)
-                # print(f'{fabric.global_rank}:{i} inference done in training loop')
                 # shift the targets such that output n predicts token n+1
                 logits[-1] = logits[-1][..., :-1, :]
                 loss = chunked_cross_entropy(logits, targets[..., 1:])
-                # print(f'{fabric.global_rank}:{i} loss calculated')
                 fabric.backward(loss / cfg.data.gradient_accumulation_iters)
-                # print(f'{fabric.global_rank}:{i} backward done')
                 losses.append(loss.item())
 
             if not is_accumulating:
-                # print(f'{fabric.global_rank}:{i} before updating optimizer')
                 optimizer.step()
                 optimizer.zero_grad()
-                # print(f'{fabric.global_rank}:{i} after updating optimizer')
                 if step_count > cfg.experiment.warmup_steps:
                     scheduler.step()
                 step_count += 1
@@ -340,7 +338,7 @@ def train(
                 and step_count % cfg.logging_and_checkpoint.eval_interval == 0
             ):
                 t0 = time.perf_counter()
-                val_loss = validate(fabric, model, val_data, cfg)
+                val_loss = validate(fabric, model, val_data, cfg, tokenizer)
                 fabric.log("val_loss", val_loss, iter_num)
                 t1 = time.perf_counter() - t0
                 fabric.print(
@@ -360,7 +358,11 @@ def train(
 # FSDP has issues with `inference_mode`
 @torch.no_grad()
 def validate(
-    fabric: L.Fabric, model: GPT, val_data: List[Dict], cfg: dotdict
+    fabric: L.Fabric,
+    model: GPT,
+    val_data: List[Dict],
+    cfg: dotdict[str, Any],
+    tokenizer: Tokenizer,
 ) -> torch.Tensor:
     fabric.print("Validating ...")
     model.eval()
@@ -375,16 +377,42 @@ def validate(
             chunked_cross_entropy(logits[..., :-1, :], targets[..., 1:], chunk_size=0)
         )
     val_loss = sum(losses) / len(losses)
-    # print(f'{fabric.global_rank} before setting model to train mode')
+
+    # produce an example:
+    qualitative_val_sample_idx = min(
+        cfg.eval.qualitative_val_sample_idx or 0, len(val_data) - 1
+    )
+    sample = val_data[qualitative_val_sample_idx]
+    fabric.print("Instruction:", sample["instruction"])
+    sample = {"instruction": sample["instruction"], "input": sample["input"]}
+    prompt = generate_prompt(sample)
+    encoded = tokenizer.encode(prompt, device=fabric.device)
+    with fabric.init_tensor():
+        # do not set `max_seq_length=max_returned_token` because memory is not a concern here
+        model.set_kv_cache(batch_size=1)
+    output = generate(
+        model,
+        encoded,
+        max_returned_tokens=min(
+            len(encoded) + cfg.eval.max_new_tokens, model.max_seq_length
+        ),
+        temperature=cfg.eval.temperature,
+        eos_id=tokenizer.eos_id,
+    )
+    fabric.print(
+        "Model prediction:",
+        tokenizer.decode(output).split("### Response:")[1].strip(),
+        "\n",
+    )
+
     model.train()
-    # print(f'{fabric.global_rank} model set to train mode')
     return val_loss
 
 
 def get_batch(
     fabric: L.Fabric,
     data: List[Dict],
-    cfg: dotdict,
+    cfg: dotdict[str, Any],
     ix: Optional[List[int]] = None,
     longest_seq_ix: Optional[int] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:

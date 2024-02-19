@@ -1,0 +1,20 @@
+# @package _global_
+
+defaults:
+  - _self_
+  - hydra: default.yaml
+
+data:
+  outfile_path: ???
+  inference_filepath: ???
+
+generation:
+  max_generated_tokens: 100
+  temperature: 0
+  top_k: 200
+
+model:
+  checkpoint_dir: ???
+  lora_path: ???
+  precision: bf16-true
+  quantize: bnb.nf4-dq

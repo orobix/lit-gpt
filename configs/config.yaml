@@ -10,17 +10,17 @@ logging_and_checkpoint:
   save_interval: 27 # epoch_size/(batch_size*devices)
   log_interval: ${data.batch_size} # batch_size
   mlflow_tracking_uri: "http://192.168.3.78:5100"
-  experiment_name: "clinkart_Llama70B"
-  run_name: "qlora128_dropout0.5"
+  experiment_name: ???
+  run_name: ???
   checkpoint_dir: ???
 
 experiment:
-  devices: 3
+  devices: 1
   num_epochs: 30
   learning_rate: 3e-5
   weight_decay: 0.1
   precision: "bf16-true"
-  quantize: null # bnb.nf4
+  quantize: bnb.nf4
   out_dir: ???
 
   # computed on the fly
@@ -39,9 +39,14 @@ data:
   epoch_size: 839 # number of elements in the training set
   random_microbatch: False
   data_dir: ???
- 
+
   # computed on the fly
   # gradient_accumulation_iters: batch_size // micro_batch_size
+
+eval:
+  max_new_tokens: 100
+  qualitative_val_sample_idx: null
+  temperature: 0
 
 lora:
   r: 128
