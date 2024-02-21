@@ -18,7 +18,7 @@ experiment:
   devices: 1 # the number of devices
   num_epochs: 30
   learning_rate: 3e-5
-  weight_decay: 0
+  weight_decay: 0.2
   precision: bf16-true
   quantize: bnb.nf4-dq
   out_dir: ???
@@ -28,7 +28,7 @@ experiment:
   # max_iters: num_epochs * (epoch_size // micro_batch_size) // devices
 
 data:
-  batch_size: 16 # divide the batch_size you want by devices
+  batch_size: 32 # divide the batch_size you want by devices
   micro_batch_size: 2
   max_seq_length: 256
   random_microbatch: False
@@ -46,8 +46,8 @@ eval:
   temperature: 0
 
 lora:
-  r: 32
-  alpha: 64
+  r: 128
+  alpha: 256
   dropout: 0.05
   query: True
   key: True
