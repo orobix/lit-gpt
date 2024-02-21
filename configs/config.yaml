@@ -6,8 +6,8 @@ defaults:
 
 
 logging_and_checkpoint:
-  eval_interval: 27 # epoch_size/(batch_size*devices)
-  save_interval: 27 # epoch_size/(batch_size*devices)
+  eval_interval: null # if null -> epoch_size/(batch_size*devices)
+  save_interval: null # if null -> epoch_size/(batch_size*devices)
   log_interval: ${data.batch_size} # batch_size
   mlflow_tracking_uri: "http://192.168.3.78:5100"
   experiment_name: ???
@@ -15,42 +15,39 @@ logging_and_checkpoint:
   checkpoint_dir: ???
 
 experiment:
-  devices: 1
+  devices: 1 # the number of devices
   num_epochs: 30
   learning_rate: 3e-5
-  weight_decay: 0.1
-  precision: "bf16-true"
-  quantize: bnb.nf4
+  weight_decay: 0
+  precision: bf16-true
+  quantize: bnb.nf4-dq
   out_dir: ???
+  warmup_steps: 100
 
   # computed on the fly
   # max_iters: num_epochs * (epoch_size // micro_batch_size) // devices
-  # warmup_steps: (
-  #   num_epochs 
-  #   * (epoch_size // micro_batch_size)
-  #   // devices
-  #   // gradient_accumulation_iters
-  # )
 
 data:
   batch_size: 16 # divide the batch_size you want by devices
   micro_batch_size: 2
   max_seq_length: 256
-  epoch_size: 839 # number of elements in the training set
   random_microbatch: False
+  balanced_batch_class:
+    - NONE
   data_dir: ???
 
   # computed on the fly
+  # epoch_size: len(train_data) # number of elements in the training set
   # gradient_accumulation_iters: batch_size // micro_batch_size
 
 eval:
   max_new_tokens: 100
-  qualitative_val_sample_idx: null
+  qualitative_val_sample_idx: 1
   temperature: 0
 
 lora:
-  r: 128
-  alpha: 256
+  r: 32
+  alpha: 64
   dropout: 0.05
   query: True
   key: True

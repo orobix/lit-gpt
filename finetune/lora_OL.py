@@ -10,13 +10,12 @@ import random
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import hydra
 import lightning as L
 import mlflow
 import torch
-from genericpath import isdir
 from lightning.fabric.loggers import CSVLogger
 from lightning.fabric.plugins import BitsandbytesPrecision
 from lightning.fabric.strategies import FSDPStrategy
@@ -54,7 +53,28 @@ def setup(cfg: DictConfig) -> None:
     )
     cfg.data.data_dir = Path(cfg.data.data_dir)
 
+    # load datasets
+    train_data = torch.load(cfg.data.data_dir / "train.pt")
+    val_data = torch.load(cfg.data.data_dir / "test.pt")
+    if cfg.data.balanced_batch_class:
+        train_data = create_balanced_batch(
+            train_data,
+            cfg.data.balanced_batch_class,
+            cfg.data.batch_size * cfg.data.micro_batch_size,
+        )
+    else:
+        random.shuffle(train_data)
+
     # compute hyper-parameters on the fly
+    cfg.data.epoch_size = len(train_data)
+    if cfg.logging_and_checkpoint.eval_interval is None:
+        cfg.logging_and_checkpoint.eval_interval = cfg.data.epoch_size // (
+            cfg.data.batch_size * cfg.experiment.devices
+        )
+    if cfg.logging_and_checkpoint.save_interval is None:
+        cfg.logging_and_checkpoint.save_interval = cfg.data.epoch_size // (
+            cfg.data.batch_size * cfg.experiment.devices
+        )
     cfg.data.gradient_accumulation_iters = (
         cfg.data.batch_size // cfg.data.micro_batch_size
     )
@@ -62,12 +82,6 @@ def setup(cfg: DictConfig) -> None:
         cfg.experiment.num_epochs
         * (cfg.data.epoch_size // cfg.data.micro_batch_size)
         // cfg.experiment.devices
-    )
-    cfg.experiment.warmup_steps = (
-        cfg.experiment.num_epochs
-        * (cfg.data.epoch_size // cfg.data.micro_batch_size)
-        // cfg.experiment.devices
-        // cfg.data.gradient_accumulation_iters
     )
 
     precision = cfg.experiment.precision or get_default_supported_precision(
@@ -125,12 +139,16 @@ def setup(cfg: DictConfig) -> None:
     )
     fabric.print(cfg)
 
-    fabric.launch(main, cfg)
+    fabric.launch(main, cfg, train_data, val_data)
 
 
-def main(fabric: L.Fabric, cfg: dotdict[str, Any]) -> None:
+def main(
+    fabric: L.Fabric,
+    cfg: dotdict[str, Any],
+    train_data: Sequence[Dict[str, Any]],
+    val_data: Sequence[Dict[str, Any]],
+) -> None:
     lora_cfg = cfg.lora
-    data_dir = cfg.data.data_dir
     out_dir = cfg.experiment.out_dir
     checkpoint_dir = cfg.logging_and_checkpoint.checkpoint_dir
     check_valid_checkpoint_dir(checkpoint_dir)
@@ -142,12 +160,9 @@ def main(fabric: L.Fabric, cfg: dotdict[str, Any]) -> None:
         with open(out_dir / "config.yaml", "w") as f:
             OmegaConf.save(cfg.as_dict(), f)
 
-    train_data = torch.load(data_dir / "train.pt")
-    val_data = torch.load(data_dir / "test.pt")
-
     if fabric.global_rank == 0:
         with mlflow.start_run(run_id=fabric.loggers[-1].run_id):
-            mlflow.log_artifacts(data_dir)
+            mlflow.log_artifacts(cfg.data.data_dir)
 
     if not any(
         (
@@ -206,8 +221,10 @@ def main(fabric: L.Fabric, cfg: dotdict[str, Any]) -> None:
             weight_decay=cfg.experiment.weight_decay,
         )
     optimizer = fabric.setup_optimizers(optimizer)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=cfg.experiment.max_iters // cfg.data.batch_size
+    scheduler = get_lr_scheduler(
+        optimizer,
+        warmup_steps=cfg.experiment.warmup_steps,
+        max_steps=cfg.experiment.max_iters // cfg.data.gradient_accumulation_iters,
     )
 
     # strict=False because missing keys due to LoRA weights not contained in state dict
@@ -238,9 +255,9 @@ def train(
     fabric: L.Fabric,
     model: GPT,
     optimizer: torch.optim.Optimizer,
-    scheduler: torch.optim.lr_scheduler,
-    train_data: List[Dict],
-    val_data: List[Dict],
+    scheduler: torch.optim.lr_scheduler.LRScheduler,
+    train_data: Sequence[Dict[str, Any]],
+    val_data: Sequence[Dict[str, Any]],
     cfg: dotdict[str, Any],
 ) -> None:
     tokenizer = Tokenizer(cfg.logging_and_checkpoint.checkpoint_dir)
@@ -263,30 +280,11 @@ def train(
     losses = []
     iter_num = 0
 
-    if cfg.data.balanced_batch_class:
-        train_data = create_balanced_batch(
-            train_data,
-            cfg.data.balanced_batch_class,
-            cfg.data.batch_size * cfg.data.micro_batch_size,
-        )
-    else:
-        random.shuffle(train_data)
-
     # Epochs management added to simplify experiments setting
     for _ in range(0, cfg.experiment.num_epochs):
         # Random shuffle added to increase the variability in training
         for i in range(0, len(train_data), cfg.data.micro_batch_size):
             iter_num += 1
-            if step_count <= cfg.experiment.warmup_steps:
-                # linear warmup
-                lr = (
-                    cfg.experiment.learning_rate
-                    * step_count
-                    / cfg.experiment.warmup_steps
-                )
-                for param_group in optimizer.param_groups:
-                    param_group["lr"] = lr
-
             iter_t0 = time.perf_counter()
 
             # The default microbatch definition selects elements in random way (idx selected in the get_batch function). To guarantee the inclusion of the entire dataset in a epoch a continuous selection of data ids has been added
@@ -310,8 +308,7 @@ def train(
             if not is_accumulating:
                 optimizer.step()
                 optimizer.zero_grad()
-                if step_count > cfg.experiment.warmup_steps:
-                    scheduler.step()
+                scheduler.step()
                 step_count += 1
 
             total_lengths += input_ids.numel()
@@ -342,7 +339,7 @@ def train(
                 fabric.log("val_loss", val_loss, iter_num)
                 t1 = time.perf_counter() - t0
                 fabric.print(
-                    f"step {iter_num}: val loss {val_loss.item():.4f}, val time: {t1 * 1000:.2f}ms"
+                    f"step {iter_num}: val loss {val_loss.item():.4f}, val time: {t1 * 1000:.2f}ms\n"
                 )
                 fabric.barrier()
             if (
@@ -360,11 +357,11 @@ def train(
 def validate(
     fabric: L.Fabric,
     model: GPT,
-    val_data: List[Dict],
+    val_data: Sequence[Dict[str, Any]],
     cfg: dotdict[str, Any],
     tokenizer: Tokenizer,
 ) -> torch.Tensor:
-    fabric.print("Validating ...")
+    fabric.print("Validating ...\n")
     model.eval()
     losses = []
     for i in range(0, len(val_data), cfg.data.micro_batch_size):
@@ -383,9 +380,11 @@ def validate(
         cfg.eval.qualitative_val_sample_idx or 0, len(val_data) - 1
     )
     sample = val_data[qualitative_val_sample_idx]
-    fabric.print("Instruction:", sample["instruction"])
-    sample = {"instruction": sample["instruction"], "input": sample["input"]}
-    prompt = generate_prompt(sample)
+    fabric.print(f"----- Instruction: -----\n{sample['instruction']}")
+    fabric.print(f"----- Input: -----\n{sample['input']}")
+    prompt = generate_prompt(
+        {"instruction": sample["instruction"], "input": sample["input"]}
+    )
     encoded = tokenizer.encode(prompt, device=fabric.device)
     with fabric.init_tensor():
         # do not set `max_seq_length=max_returned_token` because memory is not a concern here
@@ -399,11 +398,9 @@ def validate(
         temperature=cfg.eval.temperature,
         eos_id=tokenizer.eos_id,
     )
-    fabric.print(
-        "Model prediction:",
-        tokenizer.decode(output).split("### Response:")[1].strip(),
-        "\n",
-    )
+    model_prediction = tokenizer.decode(output).split("### Response:")[1].strip()
+    fabric.print(f"----- Model prediction: -----\n{model_prediction}")
+    fabric.print(f"----- GT: -----\n{sample['output']}\n")
 
     model.train()
     return val_loss
@@ -411,7 +408,7 @@ def validate(
 
 def get_batch(
     fabric: L.Fabric,
-    data: List[Dict],
+    data: Sequence[Dict[str, Any]],
     cfg: dotdict[str, Any],
     ix: Optional[List[int]] = None,
     longest_seq_ix: Optional[int] = None,
@@ -452,7 +449,22 @@ def get_batch(
     return x, y
 
 
-def get_longest_seq_length(data: List[Dict]) -> Tuple[int, int]:
+def get_lr_scheduler(
+    optimizer, warmup_steps: int, max_steps: int
+) -> torch.optim.lr_scheduler.LRScheduler:
+    # linear warmup followed by cosine annealing
+    scheduler1 = torch.optim.lr_scheduler.LambdaLR(
+        optimizer, lambda step: step / warmup_steps
+    )
+    scheduler2 = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=(max_steps - warmup_steps)
+    )
+    return torch.optim.lr_scheduler.SequentialLR(
+        optimizer, [scheduler1, scheduler2], milestones=[warmup_steps]
+    )
+
+
+def get_longest_seq_length(data: Sequence[Dict[str, Any]]) -> Tuple[int, int]:
     # find out the minimum max_seq_length required during fine-tuning (saves memory!)
     lengths = [len(d["input_ids"]) for d in data]
     longest_seq_length = max(lengths)
