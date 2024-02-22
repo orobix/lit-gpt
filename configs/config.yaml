@@ -31,11 +31,14 @@ data:
   batch_size: 32 # divide the batch_size you want by devices
   micro_batch_size: 2
   max_seq_length: 256
+  valset_split_percentage: null
   random_microbatch: False
   balanced_batch_class:
     - NONE
-  data_dir: ???
-
+  data_dir: /home/federica.moretti/ecream/full_finetuning/clinkart/data/pt_data/data_from_docs_split_OL
+  json:
+    train_file_path: null
+    val_file_path: null
   # computed on the fly
   # epoch_size: len(train_data) # number of elements in the training set
   # gradient_accumulation_iters: batch_size // micro_batch_size

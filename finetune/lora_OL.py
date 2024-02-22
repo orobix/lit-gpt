@@ -40,7 +40,7 @@ from lit_gpt.utils import (
     load_checkpoint,
     num_parameters,
 )
-from scripts.prepare_alpaca import generate_prompt
+from scripts.prepare_data import generate_prompt, prepare
 
 
 @hydra.main(version_base="1.3", config_path="../configs", config_name="config")
@@ -52,7 +52,10 @@ def setup(cfg: DictConfig) -> None:
         cfg.logging_and_checkpoint.checkpoint_dir
     )
     cfg.data.data_dir = Path(cfg.data.data_dir)
-
+    
+    if cfg.data.json.train_file_path:
+        prepare(destination_path=cfg.data.data_dir, checkpoint_dir=cfg.logging_and_checkpoint.checkpoint_dir, test_split_fraction=cfg.data.valset_split_percentage, data_file_name=cfg.data.json.train_file_path, data_file_name_val=cfg.data.json.val_file_path)
+    
     # load datasets
     train_data = torch.load(cfg.data.data_dir / "train.pt")
     val_data = torch.load(cfg.data.data_dir / "test.pt")
