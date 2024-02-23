@@ -31,7 +31,7 @@ def prepare(
     ignore_index: int = -1,
     max_seq_length: Optional[int] = None,
 ) -> None:
-    """Prepare the E3C dataset for instruction tuning.
+    """Prepare the dataset for instruction tuning.
 
     The output is a training and test dataset saved as `train.pt` and `test.pt`,
     which stores the preprocessed and tokenized prompts and labels.

@@ -8,7 +8,7 @@ defaults:
 logging_and_checkpoint:
   eval_interval: null # if null -> epoch_size/(batch_size*devices)
   save_interval: null # if null -> epoch_size/(batch_size*devices)
-  log_interval: ${data.batch_size} # batch_size
+  log_interval: 16 # batch_size // micro_batch_size
   mlflow_tracking_uri: "http://192.168.3.78:5100"
   experiment_name: ???
   run_name: ???
@@ -35,7 +35,7 @@ data:
   random_microbatch: False
   balanced_batch_class:
     - NONE
-  data_dir: /home/federica.moretti/ecream/full_finetuning/clinkart/data/pt_data/data_from_docs_split_OL
+  data_dir: data/data_from_docs_split_OL
   json:
     train_file_path: null
     val_file_path: null

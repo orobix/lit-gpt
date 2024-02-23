@@ -60,16 +60,16 @@ def setup(cfg: DictConfig) -> None:
     train_data = torch.load(cfg.data.data_dir / "train.pt")
     val_data = torch.load(cfg.data.data_dir / "test.pt")
     if cfg.data.balanced_batch_class:
-        train_data = create_balanced_batch(
+        processed_train_data = create_balanced_batch(
             train_data,
             cfg.data.balanced_batch_class,
             cfg.data.batch_size * cfg.data.micro_batch_size,
         )
     else:
-        random.shuffle(train_data)
+        processed_train_data = train_data
 
     # compute hyper-parameters on the fly
-    cfg.data.epoch_size = len(train_data)
+    cfg.data.epoch_size = len(processed_train_data)
     if cfg.logging_and_checkpoint.eval_interval is None:
         cfg.logging_and_checkpoint.eval_interval = cfg.data.epoch_size // (
             cfg.data.batch_size * cfg.experiment.devices
@@ -264,14 +264,7 @@ def train(
     cfg: dotdict[str, Any],
 ) -> None:
     tokenizer = Tokenizer(cfg.logging_and_checkpoint.checkpoint_dir)
-    longest_seq_length, longest_seq_ix = get_longest_seq_length(train_data)
-    model.max_seq_length = min(
-        longest_seq_length, cfg.data.max_seq_length or float("inf")
-    )
-    fabric.print(
-        f"The longest sequence length in the train data is {longest_seq_length}, the model's maximum sequence length is"
-        f" {model.max_seq_length} and context length is {model.config.block_size}"
-    )
+    longest_seq_length, longest_seq_ix = None, None
 
     validate(fabric, model, val_data, cfg, tokenizer)  # sanity check
 
@@ -286,7 +279,29 @@ def train(
     # Epochs management added to simplify experiments setting
     for _ in range(0, cfg.experiment.num_epochs):
         # Random shuffle added to increase the variability in training
-        for i in range(0, len(train_data), cfg.data.micro_batch_size):
+        if cfg.data.balanced_batch_class:
+            processed_train_data = create_balanced_batch(
+                train_data,
+                cfg.data.balanced_batch_class,
+                cfg.data.batch_size * cfg.data.micro_batch_size,
+            )
+        else:
+            processed_train_data = random.shuffle(train_data)
+        
+        # Only for the first iteration
+        if iter_num == 0:
+            # get the longest sequence length and its index
+            # use it in the first microbatch to check whether or not the model fits in the GPU
+            longest_seq_length, longest_seq_ix = get_longest_seq_length(processed_train_data)
+            model.max_seq_length = min(
+                longest_seq_length, cfg.data.max_seq_length or float("inf")
+            )
+            fabric.print(
+                f"The longest sequence length in the train data is {longest_seq_length}, the model's maximum sequence length is"
+                f" {model.max_seq_length} and context length is {model.config.block_size}"
+            )
+
+        for i in range(0, len(processed_train_data), cfg.data.micro_batch_size):
             iter_num += 1
             iter_t0 = time.perf_counter()
 
@@ -294,9 +309,9 @@ def train(
             idx = None
             if not cfg.data.random_microbatch:
                 idx = list(range(i, i + cfg.data.micro_batch_size))
-                idx = [i % len(train_data) for i in idx]
+                idx = [i % len(processed_train_data) for i in idx]
             input_ids, targets = get_batch(
-                fabric, train_data, cfg, idx, longest_seq_ix if iter_num == 1 else None
+                fabric, processed_train_data, cfg, idx, longest_seq_ix if iter_num == 1 else None
             )
 
             is_accumulating = iter_num % cfg.data.gradient_accumulation_iters != 0
