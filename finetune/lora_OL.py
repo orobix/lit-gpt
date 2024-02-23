@@ -59,10 +59,10 @@ def setup(cfg: DictConfig) -> None:
     # load datasets
     train_data = torch.load(cfg.data.data_dir / "train.pt")
     val_data = torch.load(cfg.data.data_dir / "test.pt")
-    if cfg.data.balanced_batch_class:
+    if cfg.data.balanced_batch.classes:
         processed_train_data = create_balanced_batch(
             train_data,
-            cfg.data.balanced_batch_class,
+            cfg.data.balanced_batch,
             cfg.data.batch_size * cfg.data.micro_batch_size,
         )
     else:
@@ -279,10 +279,10 @@ def train(
     # Epochs management added to simplify experiments setting
     for _ in range(0, cfg.experiment.num_epochs):
         # Random shuffle added to increase the variability in training
-        if cfg.data.balanced_batch_class:
+        if cfg.data.balanced_batch.classes:
             processed_train_data = create_balanced_batch(
                 train_data,
-                cfg.data.balanced_batch_class,
+                cfg.data.balanced_batch,
                 cfg.data.batch_size * cfg.data.micro_batch_size,
             )
         else:

@@ -33,8 +33,10 @@ data:
   max_seq_length: 256
   valset_split_percentage: null
   random_microbatch: False
-  balanced_batch_class:
-    - NONE
+  balanced_batch:
+    classes:
+      - RELATION
+    percentage: 0.4
   data_dir: data/data_from_docs_split_OL
   json:
     train_file_path: null
