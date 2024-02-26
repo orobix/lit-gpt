@@ -52,10 +52,16 @@ def setup(cfg: DictConfig) -> None:
         cfg.logging_and_checkpoint.checkpoint_dir
     )
     cfg.data.data_dir = Path(cfg.data.data_dir)
-    
+
     if cfg.data.json.train_file_path:
-        prepare(destination_path=cfg.data.data_dir, checkpoint_dir=cfg.logging_and_checkpoint.checkpoint_dir, test_split_fraction=cfg.data.valset_split_percentage, data_file_name=cfg.data.json.train_file_path, data_file_name_val=cfg.data.json.val_file_path)
-    
+        prepare(
+            destination_path=cfg.data.data_dir,
+            checkpoint_dir=cfg.logging_and_checkpoint.checkpoint_dir,
+            test_split_fraction=cfg.data.valset_split_percentage,
+            data_file_name=cfg.data.json.train_file_path,
+            data_file_name_val=cfg.data.json.val_file_path,
+        )
+
     # load datasets
     train_data = torch.load(cfg.data.data_dir / "train.pt")
     val_data = torch.load(cfg.data.data_dir / "test.pt")
@@ -264,7 +270,14 @@ def train(
     cfg: dotdict[str, Any],
 ) -> None:
     tokenizer = Tokenizer(cfg.logging_and_checkpoint.checkpoint_dir)
-    longest_seq_length, longest_seq_ix = None, None
+    longest_seq_length, longest_seq_ix = get_longest_seq_length(train_data)
+    model.max_seq_length = min(
+        longest_seq_length, cfg.data.max_seq_length or float("inf")
+    )
+    fabric.print(
+        f"The longest sequence length in the train data is {longest_seq_length}, the model's maximum sequence length is"
+        f" {model.max_seq_length} and context length is {model.config.block_size}"
+    )
 
     validate(fabric, model, val_data, cfg, tokenizer)  # sanity check
 
@@ -287,18 +300,13 @@ def train(
             )
         else:
             processed_train_data = random.shuffle(train_data)
-        
+
         # Only for the first iteration
         if iter_num == 0:
             # get the longest sequence length and its index
             # use it in the first microbatch to check whether or not the model fits in the GPU
-            longest_seq_length, longest_seq_ix = get_longest_seq_length(processed_train_data)
-            model.max_seq_length = min(
-                longest_seq_length, cfg.data.max_seq_length or float("inf")
-            )
-            fabric.print(
-                f"The longest sequence length in the train data is {longest_seq_length}, the model's maximum sequence length is"
-                f" {model.max_seq_length} and context length is {model.config.block_size}"
+            longest_seq_length, longest_seq_ix = get_longest_seq_length(
+                processed_train_data
             )
 
         for i in range(0, len(processed_train_data), cfg.data.micro_batch_size):
@@ -311,7 +319,11 @@ def train(
                 idx = list(range(i, i + cfg.data.micro_batch_size))
                 idx = [i % len(processed_train_data) for i in idx]
             input_ids, targets = get_batch(
-                fabric, processed_train_data, cfg, idx, longest_seq_ix if iter_num == 1 else None
+                fabric,
+                processed_train_data,
+                cfg,
+                idx,
+                longest_seq_ix if iter_num == 1 else None,
             )
 
             is_accumulating = iter_num % cfg.data.gradient_accumulation_iters != 0
@@ -409,7 +421,7 @@ def validate(
         model.set_kv_cache(batch_size=1)
     output = generate(
         model,
-        encoded,
+        encoded[: cfg.data.max_seq_length],
         max_returned_tokens=min(
             len(encoded) + cfg.eval.max_new_tokens, model.max_seq_length
         ),
