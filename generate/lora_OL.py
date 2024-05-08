@@ -19,7 +19,7 @@ sys.path.append(str(wd))
 
 from generate.base import generate
 from lit_gpt import Tokenizer
-from lit_gpt.lora import GPT, Config
+from lit_gpt.lora import GPT, Config, merge_lora_weights
 from lit_gpt.utils import (
     check_valid_checkpoint_dir,
     dotdict,
@@ -86,7 +86,7 @@ def main(fabric: L.Fabric, cfg: dotdict[str, Any]) -> None:
     tokenized_dataset = tokenize_dataset(
         fabric,
         tokenizer,
-        cfg.data.inference_filepath,
+        cfg.data.infile_path,
     )
 
     prompt_lengths = [sample["encoded_prompt"].size(0) for sample in tokenized_dataset]
@@ -122,6 +122,8 @@ def main(fabric: L.Fabric, cfg: dotdict[str, Any]) -> None:
         file=sys.stderr,
     )
 
+    if cfg.model.quantize is None:
+        merge_lora_weights(model)
     model = fabric.setup(model)
 
     if fabric.global_rank == 0:

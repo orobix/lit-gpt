@@ -20,7 +20,6 @@ from lightning.fabric.loggers import CSVLogger
 from lightning.fabric.plugins import BitsandbytesPrecision
 from lightning.fabric.strategies import FSDPStrategy
 from lightning.fabric.utilities import ThroughputMonitor
-from lightning.pytorch.loggers import MLFlowLogger
 from omegaconf import DictConfig, OmegaConf
 
 # support running without installing as a package
@@ -30,6 +29,7 @@ sys.path.append(str(wd))
 
 from generate.base import generate
 from lit_gpt.lora import GPT, Block, Config, lora_filter, mark_only_lora_as_trainable
+from lit_gpt.mlflow_utils import CustomMLFlowLogger
 from lit_gpt.tokenizer import Tokenizer
 from lit_gpt.utils import (
     check_valid_checkpoint_dir,
@@ -119,7 +119,7 @@ def setup(cfg: DictConfig) -> None:
             )
         strategy = FSDPStrategy(
             auto_wrap_policy={Block},
-            # activation_checkpointing_policy={Block},
+            activation_checkpointing_policy={Block},
             state_dict_type="full",
             limit_all_gathers=True,
             cpu_offload=False,
@@ -133,10 +133,11 @@ def setup(cfg: DictConfig) -> None:
         cfg.experiment.out_dir.name,
         flush_logs_every_n_steps=cfg.logging_and_checkpoint.log_interval,
     )
-    mlf_logger = MLFlowLogger(
+    mlf_logger = CustomMLFlowLogger(
         experiment_name=cfg.logging_and_checkpoint.experiment_name,
         tracking_uri=cfg.logging_and_checkpoint.mlflow_tracking_uri,
         run_name=cfg.logging_and_checkpoint.run_name,
+        synchronous=cfg.logging_and_checkpoint.synchronous,
     )
     mlf_logger.log_hyperparams(cfg)
     fabric = L.Fabric(

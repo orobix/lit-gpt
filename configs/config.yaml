@@ -13,12 +13,13 @@ logging_and_checkpoint:
   experiment_name: ???
   run_name: ???
   checkpoint_dir: ???
+  synchronous: False
 
 experiment:
   devices: 1 # the number of devices
   num_epochs: 30
   learning_rate: 3e-5
-  weight_decay: 0.2
+  weight_decay: 0.1
   precision: bf16-true
   quantize: bnb.nf4-dq
   out_dir: ???
@@ -36,8 +37,8 @@ data:
   balanced_batch:
     classes:
       - RELATION
-    percentage: 0.4
-  data_dir: data/data_from_docs_split_OL
+    percentage: 0.5
+  data_dir: data/data_from_docs_split_OL/llama
   json:
     train_file_path: null
     val_file_path: null

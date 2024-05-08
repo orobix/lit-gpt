@@ -6,7 +6,7 @@ defaults:
 
 data:
   outfile_path: ???
-  inference_filepath: ???
+  infile_path: ???
 
 generation:
   max_generated_tokens: 100
