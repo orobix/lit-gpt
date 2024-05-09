@@ -3,10 +3,14 @@
 import logging
 import re
 
-from litgpt.model import GPT  # needs to be imported before config
+from dotenv import find_dotenv, load_dotenv
+
 from litgpt.config import Config
+from litgpt.model import GPT  # needs to be imported before config
 from litgpt.prompts import PromptStyle
 from litgpt.tokenizer import Tokenizer
+
+_ = load_dotenv(find_dotenv())
 
 # Suppress excessive warnings, see https://github.com/pytorch/pytorch/issues/111632
 pattern = re.compile(".*Profiler function .* will be ignored")

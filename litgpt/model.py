@@ -7,17 +7,18 @@ https://github.com/EleutherAI/gpt-neox/tree/main/megatron/model.
 """
 
 import math
-from typing import Any, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Optional, Tuple
 
 import torch
 import torch.nn as nn
 from typing_extensions import Self
 
-from litgpt.config import Config
+if TYPE_CHECKING:
+    from litgpt.config import Config
 
 
 class GPT(nn.Module):
-    def __init__(self, config: Config) -> None:
+    def __init__(self, config: "Config") -> None:
         super().__init__()
         assert config.padded_vocab_size is not None
         self.config = config
@@ -97,7 +98,7 @@ class GPT(nn.Module):
 
     @classmethod
     def from_name(cls, name: str, **kwargs: Any) -> Self:
-        return cls(Config.from_name(name, **kwargs))
+        return cls("Config".from_name(name, **kwargs))
 
     def rope_cache(self, device: Optional[torch.device] = None) -> Tuple[torch.Tensor, torch.Tensor]:
         return build_rope_cache(
@@ -137,7 +138,7 @@ class GPT(nn.Module):
 
 
 class Block(nn.Module):
-    def __init__(self, config: Config) -> None:
+    def __init__(self, config: "Config") -> None:
         super().__init__()
         if not config.parallel_residual and config.shared_attention_norm:
             raise NotImplementedError(
@@ -189,7 +190,7 @@ class Block(nn.Module):
 
 
 class CausalSelfAttention(nn.Module):
-    def __init__(self, config: Config) -> None:
+    def __init__(self, config: "Config") -> None:
         super().__init__()
         shape = (config.n_head + 2 * config.n_query_groups) * config.head_size
         # key, query, value projections for all heads, but in a batch
@@ -285,7 +286,7 @@ class CausalSelfAttention(nn.Module):
 
 
 class GptNeoxMLP(nn.Module):
-    def __init__(self, config: Config) -> None:
+    def __init__(self, config: "Config") -> None:
         super().__init__()
         self.fc = nn.Linear(config.n_embd, config.intermediate_size, bias=config.bias)
         self.proj = nn.Linear(config.intermediate_size, config.n_embd, bias=config.bias)
@@ -299,7 +300,7 @@ class GptNeoxMLP(nn.Module):
 
 
 class LLaMAMLP(nn.Module):
-    def __init__(self, config: Config) -> None:
+    def __init__(self, config: "Config") -> None:
         super().__init__()
         self.fc_1 = nn.Linear(config.n_embd, config.intermediate_size, bias=config.bias)
         self.fc_2 = nn.Linear(config.n_embd, config.intermediate_size, bias=config.bias)
@@ -323,7 +324,7 @@ class GemmaMLP(LLaMAMLP):
 
 
 class LLaMAMoE(nn.Module):
-    def __init__(self, config: Config) -> None:
+    def __init__(self, config: "Config") -> None:
         super().__init__()
         self.gate = nn.Linear(config.n_embd, config.n_expert, bias=False)
         self.experts = nn.ModuleList(LLaMAMLP(config) for _ in range(config.n_expert))

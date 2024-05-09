@@ -191,6 +191,24 @@ configs = [
         mlp_class_name="LLaMAMLP",
         intermediate_size=6912,
     ),
+    dict(
+        name="Llama3-OpenBioLLM-70B",
+        hf_config=dict(org="aaditya", name="Llama3-OpenBioLLM-70B"),
+        block_size=8192,
+        vocab_size=128000,
+        padded_vocab_size=128256,
+        n_layer=80,
+        n_head=64,
+        n_embd=8192,
+        n_query_groups=8,
+        rotary_percentage=1.0,
+        parallel_residual=False,
+        bias=False,
+        norm_class_name="RMSNorm",
+        mlp_class_name="LLaMAMLP",
+        intermediate_size=28672,
+        rope_base=500000,
+    ),
 ]
 
 

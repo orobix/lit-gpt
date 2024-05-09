@@ -10,7 +10,7 @@ import sys
 from dataclasses import asdict, is_dataclass
 from io import BytesIO
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Literal, Mapping, Optional, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Literal, Mapping, Optional, TypeVar, Union
 
 import lightning as L
 import torch
@@ -24,8 +24,39 @@ from lightning.pytorch.loggers import WandbLogger
 from torch.serialization import normalize_storage_type
 from typing_extensions import Self
 
+from litgpt.logger.mlflow import CustomMLFlowLogger
+
 if TYPE_CHECKING:
     from litgpt import GPT, Config
+
+
+class dotdict(dict):
+    """
+    A dictionary supporting dot notation.
+    """
+
+    __getattr__ = dict.get
+    __setattr__ = dict.__setitem__
+    __delattr__ = dict.__delitem__
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for k, v in self.items():
+            if isinstance(v, dict):
+                self[k] = dotdict(v)
+
+    def __getstate__(self):
+        return self
+
+    def __setstate__(self, state):
+        self.update(state)
+
+    def as_dict(self) -> Dict[str, Any]:
+        _copy = dict(self)
+        for k, v in _copy.items():
+            if isinstance(v, dotdict):
+                _copy[k] = v.as_dict()
+        return _copy
 
 
 def init_out_dir(out_dir: Path) -> Path:
@@ -139,7 +170,9 @@ class SavingProxyForTensor:
 
     def __reduce_ex__(self, protocol_version):
         if protocol_version != self.protocol_version:
-            raise RuntimeError(f"Unexpected protocol version: expected {self.protocol_version}, got {protocol_version}")
+            raise RuntimeError(
+                f"Unexpected protocol version: expected {self.protocol_version}, got {protocol_version}"
+            )
         return self.reduce_ret_fn, self.reduce_args
 
 
@@ -379,6 +412,13 @@ class CycleIterator:
         self.iterable = iterable
         self.epoch = 0
         self._iterator = None
+        self._on_epoch_end_callbacks = []
+
+    def add_on_epoch_end_callback(self, callback: Callable[[], Any]) -> None:
+        self._on_epoch_end_callbacks.append(callback)
+
+    def on_epoch_end(self) -> None:
+        [fn() for fn in self._on_epoch_end_callbacks]
 
     def __next__(self) -> Any:
         if self._iterator is None:
@@ -386,6 +426,7 @@ class CycleIterator:
         try:
             return next(self._iterator)
         except StopIteration:
+            self.on_epoch_end()
             self._iterator = iter(self.iterable)
             self.epoch += 1
             return next(self._iterator)
@@ -471,7 +512,7 @@ def parse_devices(devices: Union[str, int]) -> int:
 
 
 def choose_logger(
-    logger_name: Literal["csv", "tensorboard", "wandb"],
+    logger_name: Literal["csv", "tensorboard", "wandb", "mlflow"],
     out_dir: Path,
     name: str,
     log_interval: int = 1,
@@ -484,4 +525,8 @@ def choose_logger(
         return TensorBoardLogger(root_dir=(out_dir / "logs"), name="tensorboard", **kwargs)
     if logger_name == "wandb":
         return WandbLogger(project=name, resume=resume, **kwargs)
-    raise ValueError(f"`--logger_name={logger_name}` is not a valid option. Choose from 'csv', 'tensorboard', 'wandb'.")
+    if logger_name == "mlflow":
+        return CustomMLFlowLogger(**kwargs)
+    raise ValueError(
+        f"`--logger_name={logger_name}` is not a valid option. Choose from 'csv', 'tensorboard', 'wandb'."
+    )

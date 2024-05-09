@@ -90,7 +90,12 @@ class SFTDataset(Dataset):
         if self.mask_prompt:
             labels[: len(encoded_prompt)] = self.ignore_index
 
-        return {"input_ids": encoded_prompt_and_response.type(torch.int64), "labels": labels.type(torch.int64)}
+        return {
+            **example,
+            "encoded_prompt": encoded_prompt,
+            "input_ids": encoded_prompt_and_response.type(torch.int64),
+            "labels": labels.type(torch.int64),
+        }
 
 
 def get_sft_collate_fn(max_seq_length: int = -1, pad_id: int = 0, ignore_index: int = -100):

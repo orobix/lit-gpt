@@ -1,15 +1,17 @@
 # Copyright Lightning AI. Licensed under the Apache License 2.0, see LICENSE file.
 import sys
-
 from typing import TYPE_CHECKING, Any
 
 import torch
 
 from litgpt.chat.base import main as chat_fn
+from litgpt.deploy.serve import run_server as serve_fn
+from litgpt.eval.evaluate import convert_and_evaluate as evaluate_fn
 from litgpt.finetune.adapter import setup as finetune_adapter_fn
 from litgpt.finetune.adapter_v2 import setup as finetune_adapter_v2_fn
 from litgpt.finetune.full import setup as finetune_full_fn
 from litgpt.finetune.lora import setup as finetune_lora_fn
+from litgpt.finetune.lora_OL import setup as finetune_lora_OL_fn
 from litgpt.generate.adapter import main as generate_adapter_fn
 from litgpt.generate.adapter_v2 import main as generate_adapter_v2_fn
 from litgpt.generate.base import main as generate_base_fn
@@ -24,9 +26,6 @@ from litgpt.scripts.convert_pretrained_checkpoint import (
 )
 from litgpt.scripts.download import download_from_hub as download_fn
 from litgpt.scripts.merge_lora import merge_lora as merge_lora_fn
-from litgpt.eval.evaluate import convert_and_evaluate as evaluate_fn
-from litgpt.deploy.serve import run_server as serve_fn
-
 
 if TYPE_CHECKING:
     from jsonargparse import ArgumentParser
@@ -55,6 +54,7 @@ def main() -> None:
         "finetune": {
             "help": "Finetune a model with one of our existing methods.",
             "lora": {"help": "Finetune a model with LoRA.", "fn": finetune_lora_fn},
+            "lora_OL": {"help": "Finetune a model with LoRA.", "fn": finetune_lora_OL_fn},
             "full": {"help": "Finetune a model.", "fn": finetune_full_fn},
             "adapter": {"help": "Finetune a model with Adapter.", "fn": finetune_adapter_fn},
             "adapter_v2": {"help": "Finetune a model with Adapter v2.", "fn": finetune_adapter_v2_fn},
@@ -81,7 +81,10 @@ def main() -> None:
         "convert": {
             "help": "Utilities to convert from and to LitGPT.",
             "to_litgpt": {"fn": convert_hf_checkpoint_fn, "help": "Convert Hugging Face weights to LitGPT weights."},
-            "from_litgpt": {"fn": convert_lit_checkpoint_fn, "help": "Convert LitGPT weights to Hugging Face weights."},
+            "from_litgpt": {
+                "fn": convert_lit_checkpoint_fn,
+                "help": "Convert LitGPT weights to Hugging Face weights.",
+            },
             "pretrained_checkpoint": {
                 "fn": convert_pretrained_checkpoint_fn,
                 "help": "Convert a checkpoint after pretraining.",

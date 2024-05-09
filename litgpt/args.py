@@ -1,4 +1,6 @@
 # Copyright Lightning AI. Licensed under the Apache License 2.0, see LICENSE file.
+from __future__ import annotations
+
 import math
 from dataclasses import dataclass
 from typing import Optional
@@ -73,11 +75,35 @@ class TrainArgs:
 class EvalArgs:
     """Evaluation-related arguments"""
 
-    interval: int = 600
+    interval: int | None = None
     """Number of optimizer steps between evaluation calls"""
     max_new_tokens: Optional[int] = None
     """Number of tokens to generate"""
-    max_iters: int = 100
+    max_iters: int | float = float("inf")
     """Number of iterations"""
     initial_validation: bool = False
     """Whether to evaluate on the validation set at the beginning of the training"""
+    qualitative_val_sample_idx: int | None = None
+    temperature: float = 0.0
+
+
+@dataclass
+class LoraArgs:
+    r: int = 128
+    alpha: int = 256
+    dropout: float = 0.05
+    query: bool = True
+    key: bool = True
+    value: bool = True
+    projection: bool = True
+    mlp: bool = True
+    head: bool = True
+
+
+@dataclass
+class MLFlowArgs:
+    experiment_name: str
+    run_name: str
+    tracking_uri: str = "http://192.168.3.78:5100"
+    run_id: str | None = None
+    synchronous: bool = False

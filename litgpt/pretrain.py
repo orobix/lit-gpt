@@ -19,9 +19,9 @@ from typing_extensions import Literal
 
 from litgpt import Tokenizer
 from litgpt.args import EvalArgs, TrainArgs
-from litgpt.config import name_to_config
+from litgpt.config import Config, name_to_config
 from litgpt.data import DataModule, TinyLlama
-from litgpt.model import GPT, Block, CausalSelfAttention, Config, LLaMAMLP
+from litgpt.model import GPT, Block, CausalSelfAttention, LLaMAMLP
 from litgpt.utils import (
     CLI,
     CycleIterator,
@@ -232,7 +232,7 @@ def fit(
         val_loss = validate(fabric, model, val_dataloader, max_iters=eval.max_iters)
         val_loss = f"{val_loss:.3f}"
     else:
-        validate(fabric, model, val_dataloader, max_iters=2)   # sanity check
+        validate(fabric, model, val_dataloader, max_iters=2)  # sanity check
         val_loss = "n/a"
 
     throughput = ThroughputMonitor(fabric, window_size=5)
@@ -310,7 +310,9 @@ def fit(
                     (t1 - total_t0) / (state["iter_num"] - initial_iter) * (max_iters - state["iter_num"])
                 ),
                 "tokens": state["iter_num"] * train.micro_batch_size * model.max_seq_length,
-                "total_tokens": (state["iter_num"] * train.micro_batch_size * model.max_seq_length * fabric.world_size),
+                "total_tokens": (
+                    state["iter_num"] * train.micro_batch_size * model.max_seq_length * fabric.world_size
+                ),
                 "learning_rate": lr,
             }
             if isinstance(val_loss, float):
@@ -340,7 +342,9 @@ def fit(
             fabric.barrier()
 
         if train.save_interval is not None and not is_accumulating and state["step_count"] % train.save_interval == 0:
-            save_checkpoint(fabric, state, tokenizer_dir, out_dir / f"step-{state['step_count']:08d}" / "lit_model.pth")
+            save_checkpoint(
+                fabric, state, tokenizer_dir, out_dir / f"step-{state['step_count']:08d}" / "lit_model.pth"
+            )
 
 
 @torch.no_grad()
