@@ -98,6 +98,50 @@ class SFTDataset(Dataset):
         }
 
 
+class InferenceDataset(Dataset):
+    """An in-memory dataset for supervised finetuning with `input_ids` and `labels`.
+
+    Args:
+        data: A list of samples (dicts). The target/label must be stored under the key 'output' and the instruction
+            or other data can be stored under any key as long as it is compatible with the given prompt template.
+        tokenizer: The tokenizer to use. Should match the one that was used to pretrain the model.
+        prompt_style: The style to apply to prompts. See `litgpt.prompts` for a list of available styles.
+        max_seq_length: Truncate sequences that are longer than this value. By default, no truncation is applied.
+        transform: An optional transform to apply to the sample before it gets tokenized. Use this to rename the
+            keys in the dataset to the expected 'instruction' and 'output' keys.
+
+    Returns the dictionary augmented with the encoded prompt.
+    """
+
+    def __init__(
+        self,
+        data: List[Dict[str, str]],
+        tokenizer: Tokenizer,
+        prompt_style: Union[str, PromptStyle],
+        max_seq_length: int = -1,
+        transform: Optional[Callable[[Any], Any]] = None,
+    ) -> None:
+        self.data = data
+        self.tokenizer = tokenizer
+        self.prompt_style = (
+            prompt_style if isinstance(prompt_style, PromptStyle) else PromptStyle.from_name(prompt_style)
+        )
+        self.max_seq_length = max_seq_length
+        self.transform = transform
+
+    def __len__(self) -> int:
+        return len(self.data)
+
+    def __getitem__(self, idx: int) -> Dict[str, Tensor]:
+        example = self.data[idx]
+        if self.transform is not None:
+            example = self.transform(example)
+        prompt = self.prompt_style.apply(prompt=example["instruction"], **example)
+        encoded_prompt = self.tokenizer.encode(prompt, max_length=self.max_seq_length)
+
+        return {**example, "encoded_prompt": encoded_prompt}
+
+
 def get_sft_collate_fn(max_seq_length: int = -1, pad_id: int = 0, ignore_index: int = -100):
     """Returns the collate function for supervised finetuning (needed in the DataLoader).
 

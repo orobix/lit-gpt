@@ -16,6 +16,7 @@ from litgpt.generate.adapter import main as generate_adapter_fn
 from litgpt.generate.adapter_v2 import main as generate_adapter_v2_fn
 from litgpt.generate.base import main as generate_base_fn
 from litgpt.generate.full import main as generate_full_fn
+from litgpt.generate.lora_OL import main as generate_lora_OL_fn
 from litgpt.generate.sequentially import main as generate_sequentially_fn
 from litgpt.generate.tp import main as generate_tp_fn
 from litgpt.pretrain import setup as pretrain_fn
@@ -64,6 +65,7 @@ def main() -> None:
             "help": "Generate text samples based on a model and tokenizer.",
             "base": {"fn": generate_base_fn, "help": "Default generation option."},
             "full": {"fn": generate_full_fn, "help": "For models finetuned with `litgpt finetune full`."},
+            "lora_OL": {"fn": generate_lora_OL_fn, "help": "For models finetuned with `litgpt finetune lora_OL`."},
             "adapter": {"fn": generate_adapter_fn, "help": "For models finetuned with `litgpt finetune adapter`."},
             "adapter_v2": {
                 "fn": generate_adapter_v2_fn,

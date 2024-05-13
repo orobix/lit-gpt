@@ -483,6 +483,7 @@ def save_hyperparameters(function: callable, checkpoint_dir: Path) -> None:
     known_commands = [
         ("finetune", "full"),
         ("finetune", "lora"),
+        ("finetune", "lora_OL"),
         ("finetune", "adapter"),
         ("finetune", "adapter_v2"),
         ("pretrain",),

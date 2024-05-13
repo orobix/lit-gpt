@@ -104,7 +104,10 @@ class OL(DataModule):
         self.test_dataset = self.sft_dataset_fn(data=test_data)
 
     def train_dataloader(self) -> DataLoader:
-        train_dataset = self._create_balanced_batch(self.train_dataset.data, self.batch_size)
+        if self.balance_cfg:
+            train_dataset = self._create_balanced_batch(self.train_dataset.data, self.batch_size)
+        else:
+            train_dataset = self.train_dataset.data
         return DataLoader(
             self.sft_dataset_fn(train_dataset),
             batch_size=self.batch_size,

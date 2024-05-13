@@ -1,5 +1,5 @@
-checkpoint_dir: checkpoints/meta-llama/Meta-Llama-3-70B
-out_dir: /home/michele.milesi/local/ecream/logs/runs/clinkart_Llama-3-70B/qlora_qv_r256_balanced05_dropout090_wd002
+checkpoint_dir: checkpoints/aaditya/Llama3-OpenBioLLM-70B
+out_dir: ???
 precision: bf16-true
 quantize: bnb.nf4-dq
 devices: 1 # the number of devices
@@ -42,7 +42,7 @@ train:
   beta1: 0.9
   beta2: 0.95
 logger_args:
-  experiment_name: clinkart_Llama-3-70B
+  experiment_name: clinkart_Llama3-OpenBioLLM-70B
   run_name: qlora_qv_r256_balanced05_dropout090_wd002
   tracking_uri: ???
   run_id: null

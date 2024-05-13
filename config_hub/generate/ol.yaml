@@ -1,0 +1,6 @@
+input_file: ???
+lora_dir: ???
+max_new_tokens: 100
+top_k: 200
+top_p: 1.0
+temperature: 0

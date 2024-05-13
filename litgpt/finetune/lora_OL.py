@@ -251,7 +251,7 @@ def main(
         copy_config_files(checkpoint_dir, save_path.parent)
         save_hyperparameters(setup, save_path.parent)
         save_prompt_style(data.prompt_style, save_path.parent)
-        merge_lora(checkpoint_dir=save_path.parent)
+        # merge_lora(checkpoint_dir=save_path.parent)
 
 
 def fit(
@@ -271,7 +271,6 @@ def fit(
     tokenizer = Tokenizer(checkpoint_dir)
     longest_seq_length, longest_seq_ix = get_longest_seq_length(train_dataloader.dataset)
     model.max_seq_length = min(longest_seq_length, train.max_seq_length or float("inf"))
-    model.max_seq_length = 256
     fabric.print(
         f"The longest sequence length in the train data is {longest_seq_length}, the model's maximum sequence length is"
         f" {model.max_seq_length} and context length is {model.config.block_size}"
