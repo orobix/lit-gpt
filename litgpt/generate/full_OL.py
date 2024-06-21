@@ -124,10 +124,9 @@ def main(
                 eos_id=tokenizer.eos_id,
             )
 
-            output = tokenizer.decode(y)
-            output = output.split("### Response:")[1].strip()
+            encoded_prompt = sample.pop("encoded_prompt")
+            output = tokenizer.decode(y[len(encoded_prompt) :]).strip()
             sample["prediction"] = output
-            sample.pop("encoded_prompt", None)
             generated_samples.append(sample)
             writer.write(sample)
 
