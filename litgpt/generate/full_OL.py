@@ -5,36 +5,44 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 import jsonlines as jsonl
 import lightning as L
 import torch
-import yaml
 from lightning.fabric.plugins import BitsandbytesPrecision
 
-from litgpt import PromptStyle, Tokenizer
+from litgpt import GPT, Config, PromptStyle, Tokenizer
 from litgpt.data.base import InferenceDataset
 from litgpt.generate.base import generate
-from litgpt.lora import GPT, Config
 from litgpt.prompts import has_prompt_style, load_prompt_style
 from litgpt.utils import CLI, check_valid_checkpoint_dir, get_default_supported_precision, load_checkpoint
 
 
 def main(
     input_file: Path,
-    lora_dir: Path = Path("logs/runs/lora/e3c"),
+    finetuned_dir: Path = Path("out/full/alpaca/"),
+    quantize: Optional[Literal["bnb.nf4", "bnb.nf4-dq", "bnb.fp4", "bnb.fp4-dq", "bnb.int8"]] = None,
     max_new_tokens: int = 100,
     top_k: Optional[int] = 50,
     top_p: float = 1.0,
     temperature: float = 0.8,
+    precision: Optional[str] = None,
 ) -> None:
-    """Generates a response based on a given instruction and an optional input. This script will only work with
-    checkpoints from the instruction-tuned GPT model. See ``litgpt.finetune.full``.
+    """Generate a response based on a given instruction and an optional input.
+
+    This script will only work with checkpoints from the instruction-tuned GPT model. See ``litgpt.finetune.full``.
 
     Args:
-        lora_dir: Path to the checkpoint with trained weights, which are the output of
-            ``litgpt.finetune.lora_OL``.
+        prompt: The prompt/instruction (Alpaca style).
+        input: Optional input (Alpaca style).
+        finetuned_path: Path to the checkpoint with trained weights, which are the output of
+            ``litgpt.finetune.full``.
+        checkpoint_dir: The path to the checkpoint folder with pretrained GPT weights.
+        quantize: Whether to quantize the model and using which method:
+            - bnb.nf4, bnb.nf4-dq, bnb.fp4, bnb.fp4-dq: 4-bit quantization from bitsandbytes
+            - bnb.int8: 8-bit quantization from bitsandbytes
+            for more details, see https://github.com/Lightning-AI/litgpt/blob/main/tutorials/quantize.md
         max_new_tokens: The number of generation steps to take.
         top_k: The number of top most probable tokens to consider in the sampling process.
         top_p: If specified, it represents the cumulative probability threshold to consider in the sampling process.
@@ -53,42 +61,30 @@ def main(
             or https://huyenchip.com/2024/01/16/sampling.html#top_p
         temperature: A value controlling the randomness of the sampling process. Higher values result in more random
             samples.
+        precision: Indicates the Fabric precision setting to use.
     """
-    with open(lora_dir / "hyperparameters.yaml") as f:
-        training_cfg = yaml.safe_load(f)
-
-    precision = training_cfg["precision"] or get_default_supported_precision(training=False)
+    precision = precision or get_default_supported_precision(training=False)
 
     plugins = None
-    if training_cfg["quantize"] is not None and training_cfg["quantize"].startswith("bnb."):
+    if quantize is not None and quantize.startswith("bnb."):
         if "mixed" in precision:
             raise ValueError("Quantization and mixed precision is not supported.")
         dtype = {"16-true": torch.float16, "bf16-true": torch.bfloat16, "32-true": torch.float32}[precision]
-        plugins = BitsandbytesPrecision(training_cfg["quantize"][4:], dtype)
+        plugins = BitsandbytesPrecision(quantize[4:], dtype)
         precision = None
 
     fabric = L.Fabric(devices=1, precision=precision, plugins=plugins)
     fabric.launch()
 
-    checkpoint_dir = Path(training_cfg["checkpoint_dir"])
-    check_valid_checkpoint_dir(checkpoint_dir)
-    config = Config.from_file(
-        checkpoint_dir / "model_config.yaml",
-        lora_r=training_cfg["lora"]["r"],
-        lora_alpha=training_cfg["lora"]["alpha"],
-        lora_dropout=training_cfg["lora"]["dropout"],
-        lora_query=training_cfg["lora"]["query"],
-        lora_key=training_cfg["lora"]["key"],
-        lora_value=training_cfg["lora"]["value"],
-        lora_projection=training_cfg["lora"]["projection"],
-        lora_mlp=training_cfg["lora"]["mlp"],
-        lora_head=training_cfg["lora"]["head"],
+    check_valid_checkpoint_dir(finetuned_dir)
+    config = Config.from_file(finetuned_dir / "model_config.yaml")
+
+    checkpoint_path = finetuned_dir / "lit_model.pth"
+
+    tokenizer = Tokenizer(finetuned_dir)
+    prompt_style = (
+        load_prompt_style(finetuned_dir) if has_prompt_style(finetuned_dir) else PromptStyle.from_config(config)
     )
-
-    checkpoint_path = checkpoint_dir / "lit_model.pth"
-
-    tokenizer = Tokenizer(lora_dir)
-    prompt_style = load_prompt_style(lora_dir) if has_prompt_style(lora_dir) else PromptStyle.from_config(config)
 
     with open(input_file) as f:
         data = InferenceDataset(json.load(f), tokenizer=tokenizer, prompt_style=prompt_style)
@@ -111,13 +107,12 @@ def main(
     model = fabric.setup(model)
 
     t0 = time.perf_counter()
-    load_checkpoint(fabric, model, checkpoint_path, strict=False)
-    load_checkpoint(fabric, model, lora_dir / "lit_model.pth.lora", strict=False)
+    load_checkpoint(fabric, model, checkpoint_path)
     fabric.print(f"Time to load the model weights: {time.perf_counter() - t0:.02f} seconds.", file=sys.stderr)
 
     L.seed_everything(1234)
     generated_samples = []
-    with jsonl.open(lora_dir / "predictions.jsonl", "w") as writer:
+    with jsonl.open(finetuned_dir / "predictions.jsonl", "w") as writer:
         for sample in data:
             y = generate(
                 model,
@@ -136,9 +131,9 @@ def main(
             generated_samples.append(sample)
             writer.write(sample)
 
-    with open(lora_dir / "predictions.json", "w") as f:
+    with open(finetuned_dir / "predictions.json", "w") as f:
         json.dump(generated_samples, f)
-    os.remove(lora_dir / "predictions.jsonl")
+    os.remove(finetuned_dir / "predictions.jsonl")
 
     if fabric.device.type == "cuda":
         fabric.print(f"Memory used: {torch.cuda.max_memory_allocated() / 1e9:.02f} GB", file=sys.stderr)
