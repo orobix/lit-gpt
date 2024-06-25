@@ -311,6 +311,7 @@ class H2Oai(PromptStyle):
 # Maps prompt style names to PromptStyle classes
 prompt_styles: Dict[str, Type[PromptStyle]] = {
     # Dataset-specific prompt styles
+    "default": Default,
     "alpaca": Alpaca,
     "ol": OL,
     "flan": FLAN,
