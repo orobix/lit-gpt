@@ -10,6 +10,7 @@ from litgpt.eval.evaluate import convert_and_evaluate as evaluate_fn
 from litgpt.finetune.adapter import setup as finetune_adapter_fn
 from litgpt.finetune.adapter_v2 import setup as finetune_adapter_v2_fn
 from litgpt.finetune.full import setup as finetune_full_fn
+from litgpt.finetune.full_OL import setup as finetune_full_OL_fn
 from litgpt.finetune.lora import setup as finetune_lora_fn
 from litgpt.finetune.lora_OL import setup as finetune_lora_OL_fn
 from litgpt.generate.adapter import main as generate_adapter_fn
@@ -58,6 +59,7 @@ def main() -> None:
             "lora": {"help": "Finetune a model with LoRA.", "fn": finetune_lora_fn},
             "lora_OL": {"help": "Finetune a model with LoRA.", "fn": finetune_lora_OL_fn},
             "full": {"help": "Finetune a model.", "fn": finetune_full_fn},
+            "full_OL": {"help": "Finetune a model.", "fn": finetune_full_OL_fn},
             "adapter": {"help": "Finetune a model with Adapter.", "fn": finetune_adapter_fn},
             "adapter_v2": {"help": "Finetune a model with Adapter v2.", "fn": finetune_adapter_v2_fn},
         },
