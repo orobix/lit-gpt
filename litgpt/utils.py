@@ -1,6 +1,7 @@
 # Copyright Lightning AI. Licensed under the Apache License 2.0, see LICENSE file.
 
 """Utility functions for training and inference."""
+
 import inspect
 import math
 import os
@@ -484,6 +485,7 @@ def save_hyperparameters(function: callable, checkpoint_dir: Path) -> None:
         ("finetune", "full"),
         ("finetune", "lora"),
         ("finetune", "lora_OL"),
+        ("finetune", "full_OL"),
         ("finetune", "adapter"),
         ("finetune", "adapter_v2"),
         ("pretrain",),
